@@ -14,7 +14,7 @@
 
 
 
-This repository contains a fully reproducible \*\*R pipeline\*\* developed to identify subtype-specific antigen pairs for potential \*\*Dual-CAR NK cell targeting in breast cancer\*\*.
+This repository contains a fully reproducible **R pipeline** developed to identify subtype-specific antigen pairs for potential **Dual-CAR NK cell targeting in breast cancer**.
 
 
 
@@ -26,9 +26,9 @@ The workflow integrates:
 
 - PAM50 molecular subtypes  
 
-- Differential expression (\*\*DESeq2\*\*)  
+- Differential expression (**DESeq2**)  
 
-- Human Protein Atlas (\*\*HPA\*\*) surfaceome filtering  
+- Human Protein Atlas (**HPA**) surfaceome filtering  
 
 - External GEO validation datasets  
 
@@ -58,11 +58,11 @@ However:
 
 - Single target CAR therapy often fails due to antigen escape  
 
-- Dual-CAR logic solves this by activating NK cells only when \*\*two antigens are co-expressed\*\* on the same tumor cell, improving specificity and reducing off-tumor toxicity  
+- Dual-CAR logic solves this by activating NK cells only when **two antigens are co-expressed** on the same tumor cell, improving specificity and reducing off-tumor toxicity  
 
 
 
-This pipeline identifies a pair of co-expressed surface antigens for each BRCA subtype by combining \*\*TCGA expression, HPA surface localization and correlation networks\*\*.
+This pipeline identifies a pair of co-expressed surface antigens for each BRCA subtype by combining **TCGA expression, HPA surface localization and correlation networks**.
 
 
 
@@ -110,9 +110,9 @@ Each step below is fully reproducible and explained in beginner friendly manner.
 
 ✔ counts matrix (60660 genes × 1231 samples)  
 
-✔ sample\_info metadata  
+✔ sample_info metadata  
 
-✔ gene\_info annotations  
+✔ gene_info annotations  
 
 
 
@@ -213,7 +213,7 @@ For each subtype:
 **Output:**  
 
 `results/QC/PCA_Condition_Subtype_manual.png`
-
+![PCA after DESeq2](results/QC/PCA_Condition_Subtype_manual.png)
 
 
 ---
@@ -275,7 +275,7 @@ CAR receptors can target **only surface antigens** → remove all non-surface DE
 **Output:**  
 
 `results/HPA_intersected/`
-
+`results/Venn diagrams/`
 
 
 ---
