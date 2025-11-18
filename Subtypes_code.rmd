@@ -1,0 +1,53 @@
+Changes in code for other Subtypes (just replace the subtype name and run these codes only to get the output)
+hpa_filtered <- read_csv("results/HPA_intersected/Basal_geo_hpa_filtered.csv", show_col_types = FALSE)
+basal <- read_csv("results/04_DESeq2_filtered/DEGs_Basal_annot.csv", show_col_types = FALSE)
+filtered <- basal %>% semi_join(hpa_filtered, by = "GeneSymbol")
+write_csv(filtered, "results/06_surfaceome/Basal_HPA.csv")
+
+
+
+expr_basal <- vsd_clean[, basal_ids, drop = FALSE]
+head(rownames(expr_basal))
+length(intersect(rownames(expr_basal), surf_genes))
+
+
+basal_tumor_ids <- rownames(meta)[meta$Subtype == "Basal" & meta$Condition == "Tumor"]
+expr_basal <- vsd_clean[, basal_tumor_ids]
+
+expr_basal <- expr_basal[rownames(expr_basal) %in% surf_genes, ]
+
+cat("Basal tumor samples:", ncol(expr_basal), "\n")
+cat("Surface genes:", nrow(expr_basal), "\n")
+
+
+
+
+cor_mat <- cor(t(expr_basal), method = "pearson", use = "pairwise.complete.obs")
+
+cor_long <- as.data.frame(as.table(cor_mat))
+colnames(cor_long) <- c("Gene1", "Gene2", "Correlation")
+
+cor_long$Gene1 <- as.character(cor_long$Gene1)
+cor_long$Gene2 <- as.character(cor_long$Gene2)
+
+cor_long <- cor_long[cor_long$Gene1 < cor_long$Gene2, ]
+
+
+
+cor_long <- cor_long[order(-abs(cor_long$Correlation)), ]
+
+strong_pairs <- subset(cor_long, abs(Correlation) >= 0.7)
+
+write.csv(cor_long, "results/07_coexpression/Basal_all_pairs.csv", row.names = FALSE)
+write.csv(strong_pairs, "results/08_pairs/Basal_top_pairs.csv", row.names = FALSE)
+cat("Total pairs:", nrow(cor_long), "\n")
+cat("Strongly co-expressed pairs (|r| ≥ 0.7):", nrow(strong_pairs), "\n")
+
+
+
+ggplot(strong_pairs, aes(x = Correlation)) +
+geom_histogram(bins = 40, fill = "steelblue", color = "white") +
+theme_minimal() +
+labs(title = "Distribution of Co-expression (Basal Surface Genes)",
+x = "Pearson r", y = "Number of Gene Pairs")
+ggsave("results/07_coexpression/Basal_correlation_hist.png", width = 6, height = 4, dpi = 300)

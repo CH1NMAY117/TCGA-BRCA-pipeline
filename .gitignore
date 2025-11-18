@@ -1,0 +1,24 @@
+# === TCGA-BRCA repo ===
+
+# files in root directory
+*.Rhistory
+*.rds
+*.tsv
+*.txt
+*.json
+
+# results files (large)
+results/05_normalized/*.rds
+
+# GDC and UCSC
+GDC website processing results/
+GDCdata/
+UCSC Xena Gene expression data
+
+# Allow/include these useful small result files (uncomment if you want to force include)
+# !results/counts/*
+# !results/multiqc_report/*
+# docs/screenshots/*
+
+# allow count matrix csv file explicitly
+!TCGA_BRCA_count_matrix.csv

@@ -1,0 +1,525 @@
+---
+title: "TCGA-BRCA: Subtype-specific Differential Expression Pipeline"
+author: "Chinmay Arora"
+---
+---------------------------------------------------------------------------------------
+## Make sure the you are using latest version - R-4.5.1
+# Check working version by 
+version    #or
+R.version.string    #Download the latest version - https://cran.r-project.org/bin/windows/base/
+---------------------------------------------------------------------------------------
+
+# Understand this chunk to install any package
+```{r}
+getwd()
+setwd("C:/Users/caror/Documents/TCGA_BRCA")
+# Install BiocManager if not already installed
+if (!require("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager")
+}
+
+# Install required packages
+BiocManager::install(c("TCGAbiolinks", 
+                       "SummarizedExperiment",
+                       "data.table"))
+
+# Load libraries
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(data.table)
+library(pheatmap)
+library(DESeq2)
+
+# Create directories for saving raw data and results
+dir.create("results", showWarnings = FALSE)
+dir.create("results/01_preprocessed", recursive = TRUE, showWarnings = FALSE)
+dir.create("results/02_metadata", showWarnings = FALSE)
+dir.create("results/03_DESeq2_raw", showWarnings = FALSE)
+dir.create("results/04_DESeq2_filtered", showWarnings = FALSE)
+dir.create("results/05_normalized", showWarnings = FALSE)
+dir.create("results/06_surfaceome", showWarnings = FALSE)
+dir.create("results/07_coexpression", showWarnings = FALSE)
+dir.create("results/08_pairs", showWarnings = FALSE)
+
+```
+
+# Create directory for data storage
+dir.create("TCGA_BRCA_data", showWarnings = FALSE)
+setwd("TCGA_BRCA_data")
+
+# Query and Download TCGA-BRCA Data
+```{r}
+# Query TCGA-BRCA RNA-seq data using STAR - Counts
+brca_query <- GDCquery(
+    project = "TCGA-BRCA",
+    data.category = "Transcriptome Profiling",
+    data.type = "Gene Expression Quantification",
+    workflow.type = "STAR - Counts"  # Updated workflow
+)
+
+# Check sample information
+sample_info <- getResults(brca_query)
+table(sample_info$sample_type)
+# Output: Primary Tumor (1111), Solid Tissue Normal (113), Metastatic (7)
+
+# Download the data (this may take several minutes)
+GDCdownload(brca_query, method = "client")
+```
+
+# Prepare and Extract Count Matrix
+```{r}
+# Load from raw GDC object
+brca_data <- GDCprepare(brca_query)
+
+# Extract the raw count matrix
+# For STAR - Counts, use "unstranded" assay
+counts <- assay(brca_data, "unstranded")
+
+# Get sample information
+sample_info <- as.data.frame(colData(brca_data))
+
+# Get gene information
+gene_info <- as.data.frame(rowData(brca_data))
+
+# Check dimensions
+cat("Matrix dimensions:", nrow(counts), "genes x", 
+    ncol(counts), "samples\n")
+# Output: ~60,660 genes x 1,231 samples
+```
+
+# Process and Filter the Count Matrix
+```{r}
+# Keep ONLY Primary Tumor + Normal
+sample_info <- sample_info[sample_info$sample_type %in%
+                             c("Primary Tumor", "Solid Tissue Normal"), ]
+
+# Standardize barcodes (very important)
+sample_info$barcode <- gsub("\\.","-", sample_info$barcode)
+colnames(counts) <- gsub("\\.","-", colnames(counts))
+
+# Subset count matrix to only kept samples
+counts <- counts[, sample_info$barcode]
+
+# Confirm sync
+stopifnot(ncol(counts) == nrow(sample_info))
+
+# Remove ensembl version
+rownames(counts) <- gsub("\\.\\d+$", "", rownames(counts))
+rownames(gene_info) <- gsub("\\.\\d+$", "", rownames(gene_info))
+
+# Filter for protein-coding
+if("gene_type" %in% colnames(gene_info)){
+  protein_coding <- gene_info$gene_type == "protein_coding"
+  counts <- counts[protein_coding, ]
+  gene_info <- gene_info[protein_coding, ]
+}
+
+# Filter low expression genes AFTER syncing counts/meta
+min_samples <- round(0.1 * ncol(counts))
+keep_genes <- rowSums(counts >= 10) >= min_samples
+counts <- counts[keep_genes, ]
+
+# Final check
+dim(counts); nrow(sample_info)
+
+# Save csv
+# Convert only list-columns to character by collapsing each cell with ";"
+sample_info_clean <- sample_info %>%
+  mutate(
+    across(
+      where(is.list),
+      ~ vapply(.x, function(z) paste(z, collapse = ";"), character(1))
+    )
+  )
+
+write.csv(
+  sample_info_clean,
+  "results/01_preprocessed/sample_info_tumor_normal.csv",
+  row.names = FALSE
+)
+```
+
+# Add PAM50 Subtypes to the data
+```{r}
+# --- Add PAM50 Subtypes ---
+# ---- Add PAM50 Subtypes ----
+subtypes <- TCGAquery_subtype("BRCA")
+
+# Use the correct column name
+subtypes_df <- subtypes[, c("patient", "BRCA_Subtype_PAM50")]
+colnames(subtypes_df) <- c("patient", "Subtype")
+
+# Add patient ID to sample metadata
+sample_info$patient <- substr(sample_info$barcode, 1, 12)
+
+# Merge subtype information
+meta <- dplyr::left_join(sample_info, subtypes_df, by = "patient")
+
+# Condition (Normal vs Tumor)
+meta$Condition <- factor(
+  ifelse(meta$sample_type == "Primary Tumor", "Tumor", "Normal"),
+  levels = c("Normal", "Tumor")
+)
+
+# Define subtype factor
+meta$Subtype <- factor(
+  meta$Subtype,
+  levels = c("Basal", "Her2", "LumA", "LumB")
+)
+
+# Row names must match DESeq2 input
+rownames(meta) <- meta$barcode
+
+# QC check
+table(meta$Subtype, meta$Condition)
+
+# Save csv
+meta_clean <- meta %>%
+  mutate(
+    across(
+      where(is.list),
+      ~ vapply(.x, function(z) paste(z, collapse = ";"), character(1))
+    )
+  )
+
+write.csv(
+  meta_clean,
+  "results/02_metadata/TCGA_BRCA_metadata_final.csv",
+  row.names = FALSE
+)
+```
+
+#Differential Expression Analysis
+```{r}
+### 1) Ensure row/column alignment ###
+# Set row names = barcodes for metadata
+rownames(meta) <- meta$barcode
+
+# Standardize column names in count matrix (TCGA uses "-")
+colnames(counts) <- gsub("\\.", "-", colnames(counts))
+
+# Keep only samples present in both meta & counts
+common_ids <- intersect(colnames(counts), rownames(meta))
+counts <- counts[, common_ids]
+meta <- meta[common_ids, ]
+
+stopifnot(identical(colnames(counts), rownames(meta)))  # must be TRUE
+
+### 2) Function to run DESeq2 per subtype ###
+run_subtype_deseq <- function(subtype_name, subtype_ids){
+
+  # Select tumor samples of this subtype + ALL normals
+  sample_ids <- rownames(meta)[meta$Subtype == subtype_name | meta$Condition == "Normal"]
+  sample_ids <- intersect(sample_ids, colnames(counts))  # match counts columns
+  
+  # Subset count matrix & metadata
+  cts <- counts[, sample_ids]
+  meta_sub <- meta[sample_ids, ]
+
+  # Low expression filter (gene must appear in ≥5 samples)
+  keep_genes <- rowSums(cts >= 10) >= 5
+  cts <- cts[keep_genes, ]
+
+  # Create DESeq2 object
+  dds <- DESeqDataSetFromMatrix(cts, meta_sub, design = ~ Condition)
+
+  # Run DESeq2
+  dds <- DESeq(dds)
+
+  # Extract results Tumor vs Normal
+  res <- results(dds, contrast = c("Condition", "Tumor", "Normal"))
+
+  # Shrink fold-change to reduce noise (TCGA guideline)
+  res <- lfcShrink(dds, coef="Condition_Tumor_vs_Normal", type="ashr")
+
+  # Convert to data frame & filter significant genes (padj < 0.05 & |LFC| ≥ 1)
+  res <- as.data.frame(res)
+  res$gene <- rownames(res)
+  deg <- res %>%
+    filter(!is.na(padj) & padj < 0.05 & abs(log2FoldChange) >= 1)
+
+  # Save results (raw + filtered)
+  write.csv(res, paste0("results/03_DESeq2_raw/ALL_", subtype_name, ".csv"), row.names=FALSE)
+  write.csv(deg, paste0("results/04_DESeq2_filtered/DEGs_", subtype_name, ".csv"), row.names=FALSE)
+
+  # Return DEG table
+  return(deg)
+}
+
+### 3) Run for each subtype ###
+deg_basal <- run_subtype_deseq("Basal", meta$Subtype)
+deg_her2  <- run_subtype_deseq("Her2",  meta$Subtype)
+deg_luma  <- run_subtype_deseq("LumA",  meta$Subtype)
+deg_lumb  <- run_subtype_deseq("LumB",  meta$Subtype)
+
+### 4) Print DEG counts ###
+cat("Basal DEGs:", nrow(deg_basal), "\n")
+cat("Her2 DEGs:",  nrow(deg_her2),  "\n")
+cat("LumA DEGs:",  nrow(deg_luma),  "\n")
+cat("LumB DEGs:",  nrow(deg_lumb),  "\n")
+
+
+# Quality Check
+# Recreate clean Condition
+meta$Condition <- factor(ifelse(meta$sample_type == "Primary Tumor", "Tumor", "Normal"),
+                         levels = c("Normal","Tumor"))
+
+# Hard align meta ↔ counts
+rownames(meta) <- meta$barcode
+colnames(counts) <- gsub("\\.", "-", colnames(counts))
+common_ids <- intersect(colnames(counts), rownames(meta))
+counts <- counts[, common_ids]
+meta   <- meta[common_ids, ]
+stopifnot(identical(colnames(counts), rownames(meta)))
+
+# Rebuild dds_full and vst
+dds_full <- DESeqDataSetFromMatrix(counts, meta, design = ~ Condition)
+dds_full <- DESeq(dds_full)  # optional for QC, not strictly required for vst
+vsd <- vst(dds_full, blind = TRUE)
+
+# Plot PCA
+pdat <- plotPCA(vsd, intgroup = c("Condition","Subtype"), returnData = TRUE)
+pdat$Condition <- droplevels(pdat$Condition)
+pdat$Subtype   <- droplevels(pdat$Subtype)
+
+# Sanity: we must see both levels here
+print(table(pdat$Condition))
+
+pc1var <- round(100 * attr(pdat, "percentVar")[1])
+pc2var <- round(100 * attr(pdat, "percentVar")[2])
+
+p_fixed <- ggplot(pdat, aes(PC1, PC2, color = Condition, shape = Subtype)) +
+  geom_point(size = 2.2, alpha = 0.9) +
+  labs(title = "PCA: Tumor vs Normal (colored) & PAM50 (shape)",
+       x = paste0("PC1: ", pc1var, "% variance"),
+       y = paste0("PC2: ", pc2var, "% variance")) +
+  theme_bw(base_size = 13)
+
+print(p_fixed)
+ggsave("results/QC/PCA_TumorNormal_fixed.png", p_fixed, width = 7, height = 5, dpi = 300)
+
+# Alternate code for PCA
+pdat <- plotPCA(vsd, intgroup = c("Condition", "Subtype"), returnData = TRUE)
+
+p_fixed2 <- ggplot(pdat, aes(PC1, PC2, color = Condition, shape = Subtype)) +
+  geom_point(size = 2.4, alpha = 0.85) +
+  scale_color_manual(values = c("Normal" = "blue", "Tumor" = "red")) +
+  labs(title = "PCA: Tumor vs Normal + PAM50 Subtypes") +
+  theme_bw(base_size = 13)
+
+print(p_fixed2)
+
+ggsave("results/QC/PCA_Condition_Subtype_manual.png", p_fixed2, width = 7, height = 5, dpi = 300)
+
+```
+# Export to CSV Format
+```{r}
+# Create count matrix with gene annotations
+count_matrix_annotated <- data.frame(
+    gene_id = rownames(count_matrix_final),
+    gene_name = gene_info_filtered$gene_name[match(rownames(count_matrix_final), 
+                                                    rownames(gene_info_filtered))],
+    gene_type = gene_info_filtered$gene_type[match(rownames(count_matrix_final), 
+                                                    rownames(gene_info_filtered))],
+    count_matrix_final,
+    check.names = FALSE
+)
+
+# Export as CSV
+write.csv(count_matrix_annotated, 
+          "TCGA_BRCA_count_matrix.csv", 
+          row.names = FALSE)
+
+# Alternative: Export as TSV (tab-separated, more compact)
+write.table(count_matrix_annotated, 
+            "TCGA_BRCA_count_matrix.tsv", 
+            sep = "\t", 
+            row.names = FALSE, 
+            quote = FALSE)
+
+# For very large matrices, use data.table for faster I/O
+fwrite(count_matrix_annotated, 
+       "TCGA_BRCA_count_matrix_fast.csv")
+```
+
+# Gene annotations
+```{r}
+# Save gene annotations from TCGA
+annotation <- gene_info[, c("gene_id", "gene_name", "gene_type")]
+colnames(annotation) <- c("Gene", "GeneSymbol", "GeneBiotype")
+
+annotation$Gene <- sub("\\..*$", "", annotation$Gene)
+write.csv(annotation, "results/00_metadata/TCGA_gene_annotation.csv", row.names = FALSE)
+
+annotate <- function(df){
+  merge(df, annotation, by.x = "gene", by.y = "Gene", all.x = TRUE)
+}
+
+deg_basal  <- annotate(deg_basal)
+deg_her2   <- annotate(deg_her2)
+deg_luma   <- annotate(deg_luma)
+deg_lumb   <- annotate(deg_lumb)
+
+write.csv(deg_basal, "results/04_DESeq2_filtered/DEGs_Basal_annot.csv", row.names=FALSE)
+write.csv(deg_her2,  "results/04_DESeq2_filtered/DEGs_Her2_annot.csv", row.names=FALSE)
+write.csv(deg_luma,  "results/04_DESeq2_filtered/DEGs_LumA_annot.csv", row.names=FALSE)
+write.csv(deg_lumb,  "results/04_DESeq2_filtered/DEGs_LumB_annot.csv", row.names=FALSE)
+```
+
+
+# Here we performed some steps without code
+# We took each annotatation file and intersected it with 2 files-
+# 1. HPA list v24.1 file "subcellular_location.tsv" was filtered in excel sheet with the following filters [MAIN LOCATION column-“Plasma membrane”, “Cell Junctions” , “Primary cilium”, “Primary cilium tip”, “Primary cilium transition zone” selected; RELIABILITY column-"Uncertain" filtered out] and exported to "hpa_filtered.csv"
+#2. For QC we intersect each subtype with a dataset from GEO NCBI. HER2 with GSE29431
+# Overlapping genes betwenn SUbtype, GSEid from GEO2R analysis and HPA filtered list were found using the online venn diagram tool- https://www.bioinformatics.org/gvenn and the list was saved as "subtype_geo_hpa_filtered.csv"
+
+
+# Filter the annotated genes with the processed HPA gene list
+```{r}
+# HER2 filter
+hpa_filtered <- read_csv("results/HPA_intersected/her2_geo_hpa_filtered.csv", show_col_types = FALSE)
+her2 <- read_csv("results/04_DESeq2_filtered/DEGs_Her2_annot.csv", show_col_types = FALSE)
+
+filtered <- her2 %>% semi_join(hpa_filtered, by = "GeneSymbol")
+
+write_csv(filtered, "results/06_surfaceome/Her2_HPA.csv")
+```
+
+
+# Quick fixes before the next step
+```{r}
+# Remove NA subtype samples (cannot be used for subtype-specific analysis)
+meta <- meta[!is.na(meta$Subtype), ]
+# Clean whitespace and standardize spelling
+meta$Subtype <- trimws(meta$Subtype)
+# Ensure all levels are correct
+meta$Subtype <- factor(meta$Subtype, levels = c("Basal","Her2","LumA","LumB"))
+# Re-align rownames after filtering
+rownames(meta) <- meta$barcode
+# Check again
+table(meta$Subtype, meta$Condition)
+# Load annotation file
+annot <- read.csv("results/00_metadata/TCGA_gene_annotation.csv")
+head(annot)
+# Create Ensembl - symbol map 
+ens_to_sym <- annot[, c("Gene", "GeneSymbol")]
+# Strip any leftover version numbers
+ens_to_sym$Gene <- gsub("\\..*$", "", ens_to_sym$Gene)
+# Remove version numbers from VST matrix rownames
+rownames(vsd_mat) <- gsub("\\..*$", "", rownames(vsd_mat))
+vsd_df <- data.frame(
+  Gene = rownames(vsd_mat),
+  vsd_mat,
+  check.names = FALSE
+)
+# Merge annotation with VST expression
+vsd_annot <- merge(
+  ens_to_sym,
+  vsd_df,
+  by = "Gene",
+  all.x = FALSE,
+  all.y = FALSE
+)
+# Remove rows with missing symbols
+vsd_annot <- vsd_annot[vsd_annot$GeneSymbol != "" & !is.na(vsd_annot$GeneSymbol), ]
+# Collapse the matrix by GeneSymbol
+vsd_clean <- vsd_annot %>%
+  group_by(GeneSymbol) %>%
+  summarise(across(everything(), mean)) %>%
+  as.data.frame()
+# Set gene symbols as rownames
+rownames(vsd_clean) <- vsd_clean$GeneSymbol
+# Remove GeneSymbol column
+vsd_clean <- vsd_clean[, -1]
+head(rownames(vsd_clean))
+# Extract Her2 expression
+expr_her2 <- vsd_clean[, her2_ids, drop = FALSE]
+head(rownames(expr_her2))
+# Check overlap with HPA
+surf_genes <- unique(hpa_her2$GeneSymbol)
+length(intersect(rownames(expr_her2), surf_genes))
+```
+
+# Co-expression Analysis
+```{r}
+# Extract VST-normalized expression matrix
+vsd_mat <- assay(vsd)
+
+# Load HPA-filtered gene list for HER2 subtype		# For other subtypes open Subtypes_code.rmd file in the repository and replace this code
+her2_hpa <- read.csv("results/06_surfaceome/Her2_HPA.csv")
+
+# Extract GeneSymbol column
+surf_genes <- unique(her2_hpa$GeneSymbol)
+length(intersect(rownames(expr_her2), surf_genes))
+
+# Get HER2 tumor sample IDs
+her2_ids <- rownames(meta)[meta$Subtype=="Her2" & meta$Condition=="Tumor"]
+length(her2_ids)   # how many HER2 tumor samples
+sum(her2_ids %in% colnames(vsd_mat))
+
+# Subset expression to HER2 tumor samples
+expr_her2 <- vsd_mat[, her2_ids, drop = FALSE]
+
+# Subset rows to the HPA surface genes
+common_genes <- intersect(rownames(expr_her2), surf_genes)
+expr_her2 <- expr_her2[common_genes, ]
+
+# Sanity check
+cat("HER2 tumor samples:", ncol(expr_her2), "\n")
+cat("Surfaceome genes in expression matrix:", nrow(expr_her2), "\n")
+
+## 1. Extract Her2 Tumor expression data
+
+# Extract only HER2 tumor samples from normalized VST matrix
+her2_tumor_ids <- rownames(meta)[meta$Subtype == "Her2" & meta$Condition == "Tumor"]
+expr_her2 <- vsd_clean[, her2_tumor_ids]
+
+# Subset for surface genes only
+expr_her2 <- expr_her2[rownames(expr_her2) %in% surf_genes, ]
+
+# Sanity checks
+cat("HER2 tumor samples:", ncol(expr_her2), "\n")
+cat("Surface genes:", nrow(expr_her2), "\n")
+
+## 2. Compute pairwise Pearson correlation
+
+# Compute Pearson correlation across HER2 tumor samples
+cor_mat <- cor(t(expr_her2), method = "pearson", use = "pairwise.complete.obs")
+
+# Convert to long format (gene1, gene2, correlation)
+cor_long <- as.data.frame(as.table(cor_mat))
+colnames(cor_long) <- c("Gene1", "Gene2", "Correlation")
+
+# Convert factors to character (prevents 'not meaningful for factors' warning)
+cor_long$Gene1 <- as.character(cor_long$Gene1)
+cor_long$Gene2 <- as.character(cor_long$Gene2)
+
+# Remove self-correlations and duplicates (keep upper triangle)
+cor_long <- cor_long[cor_long$Gene1 < cor_long$Gene2, ]
+
+
+## 3. Rank co-expressed pairs
+
+# Rank by absolute correlation strength
+cor_long <- cor_long[order(-abs(cor_long$Correlation)), ]
+
+# Filter strong pairs
+strong_pairs <- subset(cor_long, abs(Correlation) >= 0.7)
+
+# Save ranked co-expression pairs
+write.csv(cor_long, "results/07_coexpression/HER2_all_pairs.csv", row.names = FALSE)
+write.csv(strong_pairs, "results/08_pairs/HER2_top_pairs.csv", row.names = FALSE)
+
+cat("Total pairs:", nrow(cor_long), "\n")
+cat("Strongly co-expressed pairs (|r| ≥ 0.7):", nrow(strong_pairs), "\n")
+
+
+## 4. Visualization
+
+ggplot(strong_pairs, aes(x = Correlation)) +
+  geom_histogram(bins = 40, fill = "steelblue", color = "white") +
+  theme_minimal() +
+  labs(title = "Distribution of Co-expression (HER2 Surface Genes)",
+       x = "Pearson r", y = "Number of Gene Pairs")
+ggsave("results/07_coexpression/HER2_correlation_hist.png", width = 6, height = 4, dpi = 300)
+```
