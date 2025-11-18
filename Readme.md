@@ -246,11 +246,11 @@ For each subtype:
 
 - Filters:  
 
-- MAIN LOCATION ∈ {Plasma membrane, Cell Junctions, Primary Cilium, etc.}  
+  - MAIN LOCATION ∈ {Plasma membrane, Cell Junctions, Primary Cilium, etc.}  
 
-- RELIABILITY ≠ Uncertain  
+  - RELIABILITY ≠ Uncertain  
 
-  - Filtered list  `results/hpa_filtered.csv`
+- Filtered list  `results/hpa_filtered.csv`
 
 
 
