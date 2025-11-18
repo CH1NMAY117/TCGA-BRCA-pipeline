@@ -1,8 +1,8 @@
-\# TCGA-BRCA Pipeline for Dual CAR-NK Therapy
+# TCGA-BRCA Pipeline for Dual CAR-NK Therapy
 
 
 
-\### A complete reproducible workflow for subtype-specific differential expression, surfaceome filtering and co-expression analysis
+### A complete reproducible workflow for subtype-specific differential expression, surfaceome filtering and co-expression analysis
 
 
 
@@ -10,7 +10,7 @@
 
 
 
-\## 📌 Overview
+## 📌 Overview
 
 
 
@@ -22,21 +22,21 @@ The workflow integrates:
 
 
 
-\- TCGA-BRCA RNA-Seq (STAR-Counts)  
+- TCGA-BRCA RNA-Seq (STAR-Counts)  
 
-\- PAM50 molecular subtypes  
+- PAM50 molecular subtypes  
 
-\- Differential expression (\*\*DESeq2\*\*)  
+- Differential expression (\*\*DESeq2\*\*)  
 
-\- Human Protein Atlas (\*\*HPA\*\*) surfaceome filtering  
+- Human Protein Atlas (\*\*HPA\*\*) surfaceome filtering  
 
-\- External GEO validation datasets  
+- External GEO validation datasets  
 
-\- Pearson-based co-expression network construction  
+- Pearson-based co-expression network construction  
 
 
 
-\*\*Goal:\*\* Narrow down high-confidence co-expressed surface gene pairs that are highly expressed in tumor, low in normal tissues and subtype-specific.
+**Goal:** Narrow down high-confidence co-expressed surface gene pairs that are highly expressed in tumor, low in normal tissues and subtype-specific.
 
 
 
@@ -44,7 +44,7 @@ The workflow integrates:
 
 
 
-\## 🔬 Biological Background
+## 🔬 Biological Background
 
 
 
@@ -54,11 +54,11 @@ However:
 
 
 
-\- Many breast cancer antigens are heterogeneous  
+- Many breast cancer antigens are heterogeneous  
 
-\- Single target CAR therapy often fails due to antigen escape  
+- Single target CAR therapy often fails due to antigen escape  
 
-\- Dual-CAR logic solves this by activating NK cells only when \*\*two antigens are co-expressed\*\* on the same tumor cell, improving specificity and reducing off-tumor toxicity  
+- Dual-CAR logic solves this by activating NK cells only when \*\*two antigens are co-expressed\*\* on the same tumor cell, improving specificity and reducing off-tumor toxicity  
 
 
 
@@ -70,17 +70,17 @@ This pipeline identifies a pair of co-expressed surface antigens for each BRCA s
 
 
 
-\## 🎯 Objectives
+## 🎯 Objectives
 
 
 
-\- Identify Differentially Expressed Genes (DEGs) for each BRCA subtype vs normal tissue  
+- Identify Differentially Expressed Genes (DEGs) for each BRCA subtype vs normal tissue  
 
-\- Filter DEGs to surfaceome proteins using HPA Subcellular Data  
+- Filter DEGs to surfaceome proteins using HPA Subcellular Data  
 
-\- Validate subtype-specific DEGs using independent GEO datasets  
+- Validate subtype-specific DEGs using independent GEO datasets  
 
-\- Construct co-expression networks and rank antigen pairs for dual-CAR NK targeting  
+- Construct co-expression networks and rank antigen pairs for dual-CAR NK targeting  
 
 
 
@@ -88,7 +88,7 @@ This pipeline identifies a pair of co-expressed surface antigens for each BRCA s
 
 
 
-\## 🚀 Complete Pipeline Steps
+## 🚀 Complete Pipeline Steps
 
 
 
@@ -96,17 +96,17 @@ Each step below is fully reproducible and explained in beginner friendly manner.
 
 
 
-\### 1️⃣ Data Download – TCGA-BRCA (STAR Counts)
+### 1️⃣ Data Download – TCGA-BRCA (STAR Counts)
 
-\- Use \*\*TCGAbiolinks\*\* to directly download raw count data from the GDC
+- Use **TCGAbiolinks** to directly download raw count data from the GDC
 
-\- \[GDC Data Transfer Tool v2.3.0](https://gdc.cancer.gov/access-data/gdc-data-transfer-tool) was used to get the raw data 
+- [GDC Data Transfer Tool v2.3.0](https://gdc.cancer.gov/access-data/gdc-data-transfer-tool) was used to get the raw data 
 
-\- Transcriptome Profiling → Gene Expression Quantification → STAR-Counts workflow  
+- Transcriptome Profiling → Gene Expression Quantification → STAR-Counts workflow  
 
 
 
-\*\*Outputs:\*\*  
+**Outputs:**  
 
 ✔ counts matrix (60660 genes × 1231 samples)  
 
@@ -116,7 +116,7 @@ Each step below is fully reproducible and explained in beginner friendly manner.
 
 
 
-\*\*Why STAR-Counts?\*\*  
+**Why STAR-Counts?**  
 
 Because STAR performs accurate alignment and TCGA uses it as the standardized pipeline.
 
@@ -126,7 +126,7 @@ Because STAR performs accurate alignment and TCGA uses it as the standardized pi
 
 
 
-\### 2️⃣ Preprocessing \& Cleaning
+### 2️⃣ Preprocessing & Cleaning
 
 ✔ Keep only Primary Tumor + Solid Tissue Normal  
 
@@ -142,25 +142,9 @@ Because STAR performs accurate alignment and TCGA uses it as the standardized pi
 
 
 
-\*\*Output:\*\*  
+**Output:**  
 
-`results/01\_preprocessed/sample\_info\_tumor\_normal.csv`
-
-
-
----
-
-
-
-\### 3️⃣ Add PAM50 Subtypes
-
-\- Annotate samples with PAM50 subtypes: \*\*LumA, LumB, Her2, Basal\*\*  
-
-
-
-\*\*Output:\*\*  
-
-`results/02\_metadata/TCGA\_BRCA\_metadata\_final.csv`
+`results/01_preprocessed/sample_info_tumor_normal.csv`
 
 
 
@@ -168,31 +152,47 @@ Because STAR performs accurate alignment and TCGA uses it as the standardized pi
 
 
 
-\### 4️⃣ Differential Expression (DESeq2)
+### 3️⃣ Add PAM50 Subtypes
+
+- Annotate samples with PAM50 subtypes: **LumA, LumB, Her2, Basal**  
+
+
+
+**Output:**  
+
+`results/02_metadata/TCGA_BRCA_metadata_final.csv`
+
+
+
+---
+
+
+
+### 4️⃣ Differential Expression (DESeq2)
 
 For each subtype:  
 
-\*\*Tumor (that subtype) vs All Normals\*\*
+**Tumor (that subtype) vs All Normals**
 
 
 
-\*\*Steps:\*\*
+**Steps:**
 
-\- DESeq2 normalization  
+- DESeq2 normalization  
 
-\- Wald test  
+- Wald test  
 
-\- Fold-change shrinkage (\*\*ashr\*\*)  
+- Fold-change shrinkage (**ashr**)  
 
-\- Filter: `padj < 0.05 \& |log2FC| ≥ 1`  
+- Filter: `padj < 0.05 & |log2FC| ≥ 1`  
 
 
 
-\*\*Outputs:\*\*  
+**Outputs:**  
 
-\- `results/03\_DESeq2\_raw/`  
+- `results/03_DESeq2_raw/`  
 
-\- `results/04\_DESeq2\_filtered/`  
+- `results/04_DESeq2_filtered/`  
 
 
 
@@ -200,7 +200,7 @@ For each subtype:
 
 
 
-\### 5️⃣ VST Normalization \& QC
+### 5️⃣ VST Normalization & QC
 
 ✔ Variance Stabilizing Transformation  
 
@@ -210,27 +210,9 @@ For each subtype:
 
 
 
-\*\*Output:\*\*  
+**Output:**  
 
-`results/QC/PCA\_Condition\_Subtype\_manual.png`
-
-
-
----
-
-
-
-\### 6️⃣ Gene Annotation
-
-\- Map \*\*Ensembl IDs → Gene Symbols\*\*  
-
-\- Add Biotype information  
-
-
-
-\*\*Output:\*\*  
-
-`results/02\_metadata/TCGA\_gene\_annotation.csv`
+`results/QC/PCA_Condition_Subtype_manual.png`
 
 
 
@@ -238,25 +220,17 @@ For each subtype:
 
 
 
-\### 7️⃣ HPA Surfaceome Filtering
+### 6️⃣ Gene Annotation
 
-\- Used \*\*Human Protein Atlas v24.1 → Subcellular Location data\*\*  
+- Map **Ensembl IDs → Gene Symbols**  
 
-\- File `results/subcellular\_location.tsv` downloaded from \[Human Protein Atlas](https://www.proteinatlas.org/about/download)
-
-\- Filters:  
-
-&nbsp; - MAIN LOCATION ∈ {Plasma membrane, Cell Junctions, Primary Cilium, etc.}  
-
-&nbsp; - RELIABILITY ≠ Uncertain  
-
-  - Filtered list  `results/hpa\_filtered.csv`
+- Add Biotype information  
 
 
 
-\*\*Rationale:\*\*  
+**Output:**  
 
-CAR receptors can target \*\*only surface antigens\*\* → remove all non-surface DEGs.
+`results/02_metadata/TCGA_gene_annotation.csv`
 
 
 
@@ -264,17 +238,25 @@ CAR receptors can target \*\*only surface antigens\*\* → remove all non-surfac
 
 
 
-\### 8️⃣ GEO Validation (External Dataset)
+### 7️⃣ HPA Surfaceome Filtering
 
-\- Validate each subtype using matched GEO dataset (LumA → GSE86374, LumB → GSE86374, HER2 → GSE29431, Basal → GSE86374)  
+- Used **Human Protein Atlas v24.1 → Subcellular Location data**  
 
-\- Run GEO2R → Extract DEGs → Intersect with TCGA DEGs → Intersect with surfaceome list  
+- File `results/subcellular_location.tsv` downloaded from [Human Protein Atlas](https://www.proteinatlas.org/about/download)
+
+- Filters:  
+
+- MAIN LOCATION ∈ {Plasma membrane, Cell Junctions, Primary Cilium, etc.}  
+
+- RELIABILITY ≠ Uncertain  
+
+  - Filtered list  `results/hpa_filtered.csv`
 
 
 
-\*\*Output:\*\*  
+**Rationale:**  
 
-`results/HPA\_intersected/`
+CAR receptors can target **only surface antigens** → remove all non-surface DEGs.
 
 
 
@@ -282,7 +264,25 @@ CAR receptors can target \*\*only surface antigens\*\* → remove all non-surfac
 
 
 
-\### 9️⃣ Prepare Clean VST Expression Matrix
+### 8️⃣ GEO Validation (External Dataset)
+
+- Validate each subtype using matched GEO dataset (LumA → GSE86374, LumB → GSE86374, HER2 → GSE29431, Basal → GSE86374)  
+
+- Run GEO2R → Extract DEGs → Intersect with TCGA DEGs → Intersect with surfaceome list  
+
+
+
+**Output:**  
+
+`results/HPA_intersected/`
+
+
+
+---
+
+
+
+### 9️⃣ Prepare Clean VST Expression Matrix
 
 ✔ Remove NA subtypes  
 
@@ -292,7 +292,7 @@ CAR receptors can target \*\*only surface antigens\*\* → remove all non-surfac
 
 ✔ Collapse duplicate gene symbols  
 
-✔ Create clean `vsd\_clean` matrix  
+✔ Create clean `vsd_clean` matrix  
 
 
 
@@ -300,33 +300,33 @@ CAR receptors can target \*\*only surface antigens\*\* → remove all non-surfac
 
 
 
-\### 🔟 Co-Expression Analysis (Pearson)
+### 🔟 Co-Expression Analysis (Pearson)
 
-\*\*Goal:\*\* Identify pairs of surface genes co-expressed in all the subtypes samples.  
+**Goal:** Identify pairs of surface genes co-expressed in all the subtypes samples.  
 
 
 
 Steps:
 
-\- Extract subtype expression  
+- Extract subtype expression  
 
-\- Keep only HPA-filtered surface genes  
+- Keep only HPA-filtered surface genes  
 
-\- Compute Pearson correlation  
+- Compute Pearson correlation  
 
-\- Remove duplicates \& self-pairs  
+- Remove duplicates & self-pairs  
 
-\- Rank pairs  
+- Rank pairs  
 
-\- Filter: `|r| ≥ 0.7`  
+- Filter: `|r| ≥ 0.7`  
 
 
 
-\*\*Outputs:\*\*  
+**Outputs:**  
 
-\- `results/07\_coexpression`  
+- `results/07_coexpression`  
 
-\- `results/08\_pairs`
+- `results/08_pairs`
 
 
 
@@ -334,20 +334,17 @@ Steps:
 
 
 
-\## 📊 Example Outputs
+## 📊 Example Outputs
 
-\- Co-expression histogram → `results/07\_coexpression`  
+- Co-expression histogram → `results/07_coexpression`  
 
-\- Top-ranked pairs (Dual-CAR candidates):  
+- Top-ranked pairs (Dual-CAR candidates):  
 
 
 
 | Gene1 | Gene2 | Correlation |
-
 |-------|-------|-------------|
-
 | X     | Y     | 0.93        |
-
 | A     | B     | 0.90        |
 
 
@@ -356,59 +353,59 @@ Steps:
 
 
 
-\## 🧩 Notes, Rationale \& FAQ
+## 🧩 Notes, Rationale & FAQ
 
 
 
-\### ❓ Why intersect TCGA with GEO
+### ❓ Why intersect TCGA with GEO
 
-\- TCGA alone may contain batch effects, patient-specific noise, subtype imbalance  
+- TCGA alone may contain batch effects, patient-specific noise, subtype imbalance  
 
-\- GEO intersection ensures replication, subtype-specific signals and higher confidence  
-
-
-
-\### ❓ Why use HPA “Subcellular Location”
-
-\- CAR molecules target \*\*surface-exposed antigens\*\*  
-
-\- HPA MAIN LOCATION field provides experimentally verified plasma membrane, junctions, cilium domains  
+- GEO intersection ensures replication, subtype-specific signals and higher confidence  
 
 
 
-\### ❓ Why Pearson correlation
+### ❓ Why use HPA “Subcellular Location”
 
-\- TCGA VST-normalized data are continuous/parametric  
+- CAR molecules target **surface-exposed antigens**  
 
-\- Pearson captures linear co-expression  
-
-\- Widely used in TCGA/GTEx/WGCNA studies  
+- HPA MAIN LOCATION field provides experimentally verified plasma membrane, junctions, cilium domains  
 
 
 
-\### ❓ Why subtype-wise DESeq2
+### ❓ Why Pearson correlation
 
-\- BRCA subtypes have distinct biology and antigenic profiles  
+- TCGA VST-normalized data are continuous/parametric  
 
-\- Therapy must be subtype-optimized to avoid off-target toxicity  
+- Pearson captures linear co-expression  
 
-
-
-\### ❓ Why |LFC| ≥ 1
-
-\- Ensures biologically meaningful regulation  
-
-\- Avoids noise from borderline DEGs  
+- Widely used in TCGA/GTEx/WGCNA studies  
 
 
 
-\### ❓ Why correlation threshold |r| ≥ 0.7
+### ❓ Why subtype-wise DESeq2
 
-\- Strong biological co-expression  
+- BRCA subtypes have distinct biology and antigenic profiles  
 
-\- Reflects co-regulation probability  
+- Therapy must be subtype-optimized to avoid off-target toxicity  
 
-\- Standard in network biology  
+
+
+### ❓ Why |LFC| ≥ 1
+
+- Ensures biologically meaningful regulation  
+
+- Avoids noise from borderline DEGs  
+
+
+
+### ❓ Why correlation threshold |r| ≥ 0.7
+
+- Strong biological co-expression  
+
+- Reflects co-regulation probability  
+
+- Standard in network biology  
 
 
 
@@ -416,27 +413,27 @@ Steps:
 
 
 
-\## 📌 How to Reproduce This Pipeline
+## 📌 How to Reproduce This Pipeline
 
 
 
 ```bash
 
-\# Clone the repository
+# Clone the repository
 
 git clone https://github.com/CH1NMAY117/TCGA-BRCA-pipeline
 
-cd TCGA\_BRCA
+cd TCGA_BRCA
 
 
 
-\# Open the main file
+# Open the main file
 
 Script.rmd
 
 
 
-\# Run all chunks sequentially in RStudio
+# Run all chunks sequentially in RStudio
 
 ```
 
