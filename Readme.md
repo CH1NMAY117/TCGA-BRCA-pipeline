@@ -1,439 +1,60 @@
-# TCGA-BRCA Pipeline for Dual CAR-NK Therapy
+# TCGA-BRCA Pipeline: Subtype-Specific Surface Antigen Prioritisation
 
+An R workflow that takes TCGA-BRCA bulk RNA-seq data through PAM50 subtyping, subtype-specific differential expression (DESeq2), surfaceome filtering, external GEO validation and co-expression analysis, to shortlist candidate surface antigens for dual-CAR NK-cell design.
 
+> **Status: early build (v0), kept for transparency.** This repository contains the first version of the transcriptomic part (Phase I) of my M.Tech thesis, *Design and Optimization of Dual CAR-NK Cells for Breast Cancer Therapy Using AI/ML Approaches* (IIT Guwahati, 2026; supervisors Prof. Bithiah Grace Jaganathan and Dr. Suresh Sundaram). The final thesis pipeline is more refined and is **not published here**, because the work is being prepared for possible publication. This early build produced **false positives** (see the caveat below), so its outputs must not be read as a target list. Everything is computational prioritisation, **not experimentally validated**.
 
-### A complete reproducible workflow for subtype-specific differential expression, surfaceome filtering and co-expression analysis
+## What this early build produces
 
+Differential expression of tumour versus normal tissue within each PAM50 subtype (DESeq2, Wald test, `ashr` shrinkage, adjusted p < 0.05 and |log2FC| ≥ 1). Counts come from `results/04_DESeq2_filtered/DEGs_*.csv`:
 
+| Subtype | Upregulated | Downregulated |
+| --- | ---: | ---: |
+| Basal | 3,218 | 2,138 |
+| Her2 | 2,819 | 2,550 |
+| LumA | 2,196 | 2,088 |
+| LumB | 2,595 | 2,666 |
 
----
+![PCA by condition and subtype](results/QC/PCA_Condition_Subtype_manual.png)
 
+### Known issue: false positives in the co-expression output
 
+The highest-correlated gene pairs in `results/08_pairs/*_top_pairs.csv` are dominated by **immune and endothelial genes**, for example CD2–CD48 (Pearson r = 0.93 in Basal), CD2–IL2RG (0.95 in Her2), and PTPRB–TEK and ESAM–ROBO4 (about 0.91 to 0.92 in LumA). In bulk tissue these correlations mostly reflect infiltrating lymphocytes and blood vessels, not two antigens on the same tumour cell. These pairs are **not** dual-CAR targets. This early build has no normal-tissue safety filter or tumour-cell specificity check; later versions add them.
 
-## 📌 Overview
+## Data
 
+| File | Description |
+| --- | --- |
+| `TCGA_BRCA_count_matrix.csv` | Full GDC STAR gene-count matrix used for every analysis (84 MB; 16,837 genes × 1,231 samples plus 3 annotation columns). SHA-256 `81c0758e32c41cce38f1268bd6bece8c0ec9221adcde86e866ca92cce33c0189` |
+| `gdc-client.exe` | GDC Data Transfer Tool (Windows build, 12 MB), kept so the download step can be reproduced with the same client. SHA-256 `b9d9362da6b98645c93e7832bf7029ff5fd88bc76ce2c2baa9d0f98e70574cb8` |
 
+**Samples.** 1,231 samples were downloaded: 1,111 primary tumour (code 01), 113 solid tissue normal (11) and 7 metastatic (06). The 7 metastatic samples were excluded because the group is too small, breast cancer is a localised disease, and the DESeq2 design compares two groups (normal versus condition), so a third group cannot be added. **1,224 samples were analysed** (1,111 tumour + 113 normal; see `results/02_metadata/TCGA_BRCA_metadata_final.csv`).
 
-This repository contains a fully reproducible **R pipeline** developed to identify subtype-specific antigen pairs for potential **Dual-CAR NK cell targeting in breast cancer**.
+To reproduce from scratch, rather than using the bundled matrix, use `gdc-client.exe` (or a current client from the [GDC](https://gdc.cancer.gov/access-data/gdc-data-transfer-tool)) to download the open-access TCGA-BRCA *STAR - Counts* files, then rebuild the matrix with `Script.rmd`. The checksums above let you confirm you have the exact files used here.
 
+External resources: Human Protein Atlas v24.1 (subcellular location; CC BY-SA) for the surfaceome filter, and GEO series GSE86374 (used for LumA, LumB and Basal) and GSE29431 (Her2) for validation.
 
+## Pipeline
 
-The workflow integrates:
+1. **Preprocessing and metadata** (`Script.rmd`): build the count matrix, attach sample type and clinical metadata, QC and PCA.
+2. **PAM50 subtyping** (`Subtypes_code.rmd`): assign Basal, Her2, LumA and LumB with `genefu`.
+3. **Differential expression**: DESeq2 per subtype, tumour versus normal, then filtering at padj < 0.05 and |log2FC| ≥ 1 (`results/03_DESeq2_raw`, `results/04_DESeq2_filtered`).
+4. **Surfaceome filtering** with HPA v24.1 (`results/06_surfaceome`, `results/HPA_intersected`).
+5. **External validation** against the GEO series above (`results/GEO2R`, `results/Venn diagrams`).
+6. **Co-expression** of surface DEGs, keeping pairs with |r| ≥ 0.7 (`results/07_coexpression`, `results/08_pairs`).
 
+## Running it
 
+Run the notebooks from the repository root (the folder containing `Script.rmd`) with **R 4.5.1** and Bioconductor installed; the first chunk installs the required packages. Run `Script.rmd` first, then `Subtypes_code.rmd`.
 
-- TCGA-BRCA RNA-Seq (STAR-Counts)  
+## Limitations
 
-- PAM50 molecular subtypes  
+- Bulk RNA-seq cannot show which cell type expresses a gene, so tumour, immune and stromal signals are mixed (see the caveat above).
+- Normal tissue here is TCGA tumour-adjacent tissue, not healthy-donor tissue.
+- Surface annotation relies on HPA subcellular location only.
+- Co-expression in bulk data is not evidence of co-expression on the same cell.
+- No experimental validation has been done.
 
-- Differential expression (**DESeq2**)  
+## Licence
 
-- Human Protein Atlas (**HPA**) surfaceome filtering  
-
-- External GEO validation datasets  
-
-- Pearson-based co-expression network construction  
-
-
-
-**Goal:** Narrow down high-confidence co-expressed surface gene pairs that are highly expressed in tumor, low in normal tissues and subtype-specific.
-
-
-
----
-
-
-
-## 🔬 Biological Background
-
-
-
-Modern NK cell engineering uses CAR receptors targeting tumor antigens.  
-
-However:
-
-
-
-- Many breast cancer antigens are heterogeneous  
-
-- Single target CAR therapy often fails due to antigen escape  
-
-- Dual-CAR logic solves this by activating NK cells only when **two antigens are co-expressed** on the same tumor cell, improving specificity and reducing off-tumor toxicity  
-
-
-
-This pipeline identifies a pair of co-expressed surface antigens for each BRCA subtype by combining **TCGA expression, HPA surface localization and correlation networks**.
-
-
-
----
-
-
-
-## 🎯 Objectives
-
-
-
-- Identify Differentially Expressed Genes (DEGs) for each BRCA subtype vs normal tissue  
-
-- Filter DEGs to surfaceome proteins using HPA Subcellular Data  
-
-- Validate subtype-specific DEGs using independent GEO datasets  
-
-- Construct co-expression networks and rank antigen pairs for dual-CAR NK targeting  
-
-
-
----
-
-
-
-## 🚀 Complete Pipeline Steps
-
-
-
-Each step below is fully reproducible and explained in beginner friendly manner.
-
-
-
-### 1️⃣ Data Download – TCGA-BRCA (STAR Counts)
-
-- Use **TCGAbiolinks** to directly download raw count data from the GDC
-
-- [GDC Data Transfer Tool v2.3.0](https://gdc.cancer.gov/access-data/gdc-data-transfer-tool) was used to get the raw data 
-
-- Transcriptome Profiling → Gene Expression Quantification → STAR-Counts workflow  
-
-
-
-**Outputs:**  
-
-✔ counts matrix (60660 genes × 1231 samples)  
-
-✔ sample_info metadata  
-
-✔ gene_info annotations  
-
-
-
-**Why STAR-Counts?**  
-
-Because STAR performs accurate alignment and TCGA uses it as the standardized pipeline.
-
-
-
----
-
-
-
-### 2️⃣ Preprocessing & Cleaning
-
-✔ Keep only Primary Tumor + Solid Tissue Normal  
-
-✔ Standardize barcodes  
-
-✔ Remove gene versions (e.g., `ENSG000001.1 → ENSG000001`)  
-
-✔ Filter for protein-coding genes  
-
-✔ Remove low-expressed genes  
-
-✔ Ensure meta and counts align perfectly  
-
-
-
-**Output:**  
-
-`results/01_preprocessed/sample_info_tumor_normal.csv`
-
-
-
----
-
-
-
-### 3️⃣ Add PAM50 Subtypes
-
-- Annotate samples with PAM50 subtypes: **LumA, LumB, Her2, Basal**  
-
-
-
-**Output:**  
-
-`results/02_metadata/TCGA_BRCA_metadata_final.csv`
-
-
-
----
-
-
-
-### 4️⃣ Differential Expression (DESeq2)
-
-For each subtype:  
-
-**Tumor (that subtype) vs All Normals**
-
-
-
-**Steps:**
-
-- DESeq2 normalization  
-
-- Wald test  
-
-- Fold-change shrinkage (**ashr**)  
-
-- Filter: `padj < 0.05 & |log2FC| ≥ 1`  
-
-
-
-**Outputs:**  
-
-- `results/03_DESeq2_raw/`  
-
-- `results/04_DESeq2_filtered/`  
-
-
-
----
-
-
-
-### 5️⃣ VST Normalization & QC
-
-✔ Variance Stabilizing Transformation  
-
-✔ PCA plots to verify tumor vs normal separation  
-
-✔ Subtype clustering check  
-
-
-
-**Output:**  
-
-`results/QC/PCA_Condition_Subtype_manual.png`
-![PCA after DESeq2](results/QC/PCA_Condition_Subtype_manual.png)
-
-
----
-
-
-
-### 6️⃣ Gene Annotation
-
-- Map **Ensembl IDs → Gene Symbols**  
-
-- Add Biotype information  
-
-
-
-**Output:**  
-
-`results/02_metadata/TCGA_gene_annotation.csv`
-
-
-
----
-
-
-
-### 7️⃣ HPA Surfaceome Filtering
-
-- Used **Human Protein Atlas v24.1 → Subcellular Location data**  
-
-- File `results/subcellular_location.tsv` downloaded from [Human Protein Atlas](https://www.proteinatlas.org/about/download)
-
-- Filters:  
-
-  - MAIN LOCATION ∈ {Plasma membrane, Cell Junctions, Primary Cilium, etc.}  
-
-  - RELIABILITY ≠ Uncertain  
-
-- Filtered list  `results/hpa_filtered.csv`
-
-
-
-**Rationale:**  
-
-CAR receptors can target **only surface antigens** → remove all non-surface DEGs.
-
-
-
----
-
-
-
-### 8️⃣ GEO Validation (External Dataset)
-
-- Validate each subtype using matched GEO dataset (LumA → GSE86374, LumB → GSE86374, HER2 → GSE29431, Basal → GSE86374)  
-
-- Run GEO2R → Extract DEGs → Intersect with TCGA DEGs → Intersect with surfaceome list  
-
-
-
-**Output:**  
-
-`results/HPA_intersected/`
-`results/Venn diagrams/`
-
-
----
-
-
-
-### 9️⃣ Prepare Clean VST Expression Matrix
-
-✔ Remove NA subtypes  
-
-✔ Correct subtype labels  
-
-✔ Merge annotation  
-
-✔ Collapse duplicate gene symbols  
-
-✔ Create clean `vsd_clean` matrix  
-
-
-
----
-
-
-
-### 🔟 Co-Expression Analysis (Pearson)
-
-**Goal:** Identify pairs of surface genes co-expressed in all the subtypes samples.  
-
-
-
-Steps:
-
-- Extract subtype expression  
-
-- Keep only HPA-filtered surface genes  
-
-- Compute Pearson correlation  
-
-- Remove duplicates & self-pairs  
-
-- Rank pairs  
-
-- Filter: `|r| ≥ 0.7`  
-
-
-
-**Outputs:**  
-
-- `results/07_coexpression`  
-
-- `results/08_pairs`
-
-
-
----
-
-
-
-## 📊 Example Outputs
-
-- Co-expression histogram → `results/07_coexpression`  
-
-- Top-ranked pairs (Dual-CAR candidates):  
-
-
-
-| Gene1 | Gene2 | Correlation |
-|-------|-------|-------------|
-| X     | Y     | 0.93        |
-| A     | B     | 0.90        |
-
-
-
----
-
-
-
-## 🧩 Notes, Rationale & FAQ
-
-
-
-### ❓ Why intersect TCGA with GEO
-
-- TCGA alone may contain batch effects, patient-specific noise, subtype imbalance  
-
-- GEO intersection ensures replication, subtype-specific signals and higher confidence  
-
-
-
-### ❓ Why use HPA “Subcellular Location”
-
-- CAR molecules target **surface-exposed antigens**  
-
-- HPA MAIN LOCATION field provides experimentally verified plasma membrane, junctions, cilium domains  
-
-
-
-### ❓ Why Pearson correlation
-
-- TCGA VST-normalized data are continuous/parametric  
-
-- Pearson captures linear co-expression  
-
-- Widely used in TCGA/GTEx/WGCNA studies  
-
-
-
-### ❓ Why subtype-wise DESeq2
-
-- BRCA subtypes have distinct biology and antigenic profiles  
-
-- Therapy must be subtype-optimized to avoid off-target toxicity  
-
-
-
-### ❓ Why |LFC| ≥ 1
-
-- Ensures biologically meaningful regulation  
-
-- Avoids noise from borderline DEGs  
-
-
-
-### ❓ Why correlation threshold |r| ≥ 0.7
-
-- Strong biological co-expression  
-
-- Reflects co-regulation probability  
-
-- Standard in network biology  
-
-
-
----
-
-
-
-## 📌 How to Reproduce This Pipeline
-
-
-
-```bash
-
-# Clone the repository
-
-git clone https://github.com/CH1NMAY117/TCGA-BRCA-pipeline
-
-cd TCGA_BRCA
-
-
-
-# Open the main file
-
-Script.rmd
-
-
-
-# Run all chunks sequentially in RStudio
-
-```
-
+Code is released under the [MIT licence](LICENSE). TCGA, HPA and GEO data remain under their own terms of use.

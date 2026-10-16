@@ -11,8 +11,7 @@ R.version.string    #Download the latest version - https://cran.r-project.org/bi
 
 # Understand this chunk to install any package
 ```{r}
-getwd()
-setwd("C:/Users/caror/Documents/TCGA_BRCA")
+getwd()   # Run this notebook from the repository root (the folder that contains Script.rmd)
 # Install BiocManager if not already installed
 if (!require("BiocManager", quietly = TRUE)) {
     install.packages("BiocManager")
