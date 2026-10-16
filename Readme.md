@@ -55,6 +55,6 @@ Run the notebooks from the repository root (the folder containing `Script.rmd`) 
 - Co-expression in bulk data is not evidence of co-expression on the same cell.
 - No experimental validation has been done.
 
-## Licence
+## License
 
-Code is released under the [MIT licence](LICENSE). TCGA, HPA and GEO data remain under their own terms of use.
+Code is released under the [MIT license](LICENSE). TCGA, HPA and GEO data remain under their own terms of use.
